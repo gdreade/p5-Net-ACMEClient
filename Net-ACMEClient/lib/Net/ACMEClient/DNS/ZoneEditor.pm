@@ -92,7 +92,7 @@ sub new {
 
 # create accessors; do not put this in a method
 for my $field(qw(base_name challenge_suffix challenge_ttl
-                 new_file_suffix prog_name soa_suffix)) {
+                 new_file_suffix old_file_suffix prog_name soa_suffix)) {
     my $slot = __PACKAGE__ . "::$field";
     no strict "refs";
     *$field = sub {
@@ -113,6 +113,7 @@ sub init {
     $self->challenge_suffix('-chal-');
     $self->challenge_ttl(1);
     $self->new_file_suffix('-new');
+    $self->old_file_suffix('-old');
     $self->soa_suffix('-soa');
     
     # accept initial values passed in constructor
@@ -137,8 +138,118 @@ sub init {
     # set private members
 }
 
+sub untaint_path_attrs {
+    my $self = shift;
+
+    my $base_name = $self->base_name;
+
+    defined($base_name) || croak "base_name was not defined";
+    if ($base_name =~ m,^([-_a-z0-9\./]+)$,i) {
+	$base_name = $1;
+	$self->base_name($base_name);
+    }
+
+    my $new_file_suffix = $self->untaint_suffix($self->new_file_suffix,
+						'new_file_suffix');
+    $self->new_file_suffix($new_file_suffix);
+
+    my $old_file_suffix =
+	$self->untaint_suffix($self->old_file_suffix, 'old_file_suffix', 1);
+    defined($old_file_suffix) && $self->old_file_suffix($old_file_suffix);
+}
+
+sub untaint_suffix {
+    my $self = shift;
+    my $suffix = shift;
+    my $name = shift;
+    my $optional = shift;
+
+    defined($name) || croak "the name parameter is required";
+    defined($optional) || ($optional = 0);
+
+    if (defined($suffix)) {
+	if ($suffix =~ m,^([-_\.a-z0-9]+)$,i) {
+	    return $1;
+	} else {
+	    croak "illegal characters in $name";
+	}
+    } elsif ($optional) {
+	return undef;
+    } else {
+	croak "$name is not defined";
+    }
+}
+
+=head2 increment_soa
+
+Updates the serial number of the SOA record in the SOA file.
+
+If the B<old_file_suffix> attribute is defined, a backup of the old
+file is kept using the given suffix.
+
+=cut
+
 sub increment_soa {
     my $self = shift;
+
+    $self->untaint_path_attrs;
+
+    my $base_name = $self->base_name;
+    my $new_file_suffix = $self->new_file_suffix;
+    my $old_file_suffix = $self->old_file_suffix;
+    my $soa_suffix = $self->untaint_suffix($self->soa_suffix, 'soa_suffix');
+
+    my $soa_file = $base_name . $soa_suffix;
+    if (! -f $soa_file ) {
+	croak "SOA file $soa_file does not exist; it should have been "
+	    . "created prior to running this program";
+    }
+
+    # read in the old version
+    my $content;
+    {
+	local $/ = undef;
+	open (my $fh, "<", $soa_file)
+	    || croak "failed to open $soa_file for reading: $!";
+	binmode $fh;
+	$content = <$fh>;
+	close($fh);
+    }
+
+    # modify it
+    if ($content =~ m,(IN\s+SOA\s+\S+\s+\S+\s*\(\s*)(\d+),) {
+	my $first = $`;
+	my $record_start = $1;
+	my $serial = int($2);
+	my $last = $';
+
+	$serial++;
+
+	$content = $first . $record_start . $serial . $last;
+    } else {
+	croak "no SOA record found in $soa_file";
+    }
+
+    # write out a new version
+    my $new_file = $soa_file . $new_file_suffix;
+    open(my $fh, ">", $new_file)
+	|| croak "can't open $new_file for writing: $!";
+    print $fh $content;
+    close($fh) || croak "failed to close $new_file: $!";
+
+    # make a backup of the old version
+    if (defined($old_file_suffix)) {
+	my $old_file = $soa_file . $old_file_suffix;
+	copy($soa_file, $old_file) ||
+	    croak "failed to copy $soa_file to $old_file: $!";
+    }
+
+    # move the new version into place
+    move($new_file, $soa_file)
+	|| croak "failed to rename $new_file to $soa_file: $!";
+
+    1;
+    
 }
 
 =head2 write_challenge(fqdn, challenge, suffix)
@@ -156,14 +267,14 @@ sub write_challenge {
     my $challenge = shift;
     my $suffix = shift;
 
+    $self->untaint_path_attrs;
+    
     my $base_name = $self->base_name;
-    my $challenge_suffix = $self->challenge_suffix;
+    my $challenge_suffix = $self->untaint_suffix($self->challenge_suffix,
+						 'challenge_suffix');
     my $new_file_suffix = $self->new_file_suffix;
     my $ttl = $self->challenge_ttl;
 
-    defined($base_name) || croak "base_name was not defined";
-    defined($challenge_suffix) || croak "challenge_suffix was not defined";
-    defined($new_file_suffix) || croak "new_file_suffix was not defined";
     defined($ttl) || croak "challenge_ttl was not defined";
 
     defined($fqdn) || croak "fqdn was not defined";
@@ -171,21 +282,6 @@ sub write_challenge {
     defined($suffix) || croak "suffix was not defined";
 
     # validate and untaint
-    if ($base_name =~ m,^([-_a-z0-9\./]+)$,i) {
-	$base_name = $1;
-    }
-
-    if ($challenge_suffix =~ m,^([-_\.a-z0-9]+)$,i) {
-	$challenge_suffix = $1;
-    } else {
-	croak "illegal characters in challenge_suffix";
-    }
-
-    if ($new_file_suffix =~ m,^([-_\.a-z0-9]+)$,i) {
-	$new_file_suffix = $1;
-    } else {
-	croak "illegal characters in new_file_suffix";
-    }
 
     if ($ttl =~ m,^(\d+[smhdw]?)$,) {
 	$ttl = $1;
@@ -212,14 +308,13 @@ sub write_challenge {
 	    . "write_challenge method";
     }
 
-
     my $challenge_file = $base_name . $challenge_suffix . $suffix;
     if (! -f $challenge_file ) {
 	croak "challenge file $challenge_file does not exist; it should "
 	    . "have been created prior to running this program";
     }
 
-    my $new_file = $challenge_file . $suffix;
+    my $new_file = $challenge_file . $new_file_suffix;
     open(my $fh, ">", $new_file)
 	|| croak "can't open $new_file for writing: $!";
     printf($fh "_acme-challenge.%s.\t%s\tIN\tTXT\t\"%s\"\n",
