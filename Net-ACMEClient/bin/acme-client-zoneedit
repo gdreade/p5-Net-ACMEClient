@@ -1,0 +1,160 @@
+#! /usr/bin/env perl
+#
+# To read the man page for this script:
+#
+#    ./acme-client-zoneedit -man
+#
+
+use strict;
+use warnings;
+use Getopt::Long;
+use Pod::Usage;
+use File::Spec;
+
+
+BEGIN {
+    # This chunk of code is to allow for the fact that our modules
+    # may not be installed in the @INC path; they may be in a ../lib
+    # or ../lib/perl5  directory hierarchy if we're running a bundle
+    # extracted into an arbitrary directory.
+    #
+    # We use taint mode and the env(1) indirection to launch the program,
+    # so using the -I argument won't work.
+
+    my @mods = ( "Net::ACMEClient::DNS::ZoneEditor"
+	);
+
+    for my $mod (@mods) {
+	if (! eval "require $mod") {
+	    my ($volume, $directory, $file) = File::Spec->splitpath(__FILE__);
+	    my $bindir = File::Spec->canonpath($directory);
+	    my $libdir = File::Spec->catdir($bindir,
+					    File::Spec->updir,
+					    "lib");
+	    my $perldir = File::Spec->catdir($libdir, "perl5");
+	    
+	    if ($libdir =~ m,^(.*)$,) {
+		my $untainted = $1;
+		unshift(@INC, $untainted)
+		    || die "couldn't unshift lib directory";
+	    }
+
+	    if ($perldir =~ m,^(.*)$,) {
+		my $untainted = $1;
+		unshift(@INC, $untainted)
+		    || die "couldn't unshift perl directory";
+	    }
+	    eval "require $mod" or die "couldn't find module $mod: $!";
+	}
+	$mod->import();
+    }
+}
+
+# Enable taint mode
+# warn 'Taint mode is '.(${^TAINT} ? 'on' : 'off'); # For debugging
+exec($^X,'-T',$0,@ARGV) unless ${^TAINT};
+
+# sanitize $PATH and clean up %ENV
+local $ENV{PATH} = "/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin"
+    . ":/usr/local/bin" . "";
+delete @ENV{qw(IFS CDPATH ENV BASH_ENV)};
+
+my $cliopts = [];
+#my $cliopts = \@options;
+push @$cliopts, ('man',
+		 'help');
+
+my $h = {};
+Getopt::Long::Configure ("bundling", "no_ignore_case");
+GetOptions($h, @$cliopts) || pod2usage(2);
+
+#
+# evaluate options
+#
+pod2usage(1) if defined($h->{'help'});
+pod2usage(-exitval => 0, -verbose => 2) if defined($h->{'man'});
+
+my $editor = Net::ACMEClient::DNS::ZoneEditor->new(
+    prog_name => __FILE__,
+    base_name => '/tmp/acme.example.com'
+    );
+
+# $editor->parse_opts($h);
+#my $ret = $editor->run(\@ARGV);
+
+my $ret = $editor->write_challenge('www.example.com', 'the_cha.ll77enge', 'www');
+
+exit($ret);
+
+__END__
+
+=head1 NAME
+
+acme-client-wrapper - Added functionality for acme-client(1)
+
+=head1 SYNOPSIS
+
+acme-client-wrapper -man
+
+acme-client-wrapper [options] domain [altname ...]
+
+=head1 DESCRIPTION
+
+B<acme-client-wrapper> ... does something
+
+
+=head1 OPTIONS
+
+Write something here.  Also:
+
+=over 8
+
+=item B<--help>
+
+Print a brief help message and exit.
+
+=item B<--man>
+
+Print the manual page and exit.
+
+=item B<--challenge-type> | B<-t>
+
+The type of ACME challenge to be used.
+The explicitly handled types are
+B<dns-01> and B<internal>.  If this flag is not specified, it defaults
+to B<internal>.
+
+=item B<--create-account-key> | B<-n>
+
+Create a new account key if one does not already exist.
+
+=item B<--create-domain-key> | B<-N>
+
+Create a new domain key if one does not already exist.
+
+=item B<--multi-domain> | B<-m>
+
+=item B<--staging> | B<-s>
+
+Use the Let's Encrypt staging server instead of the production server.
+
+=back
+
+=head1 SEE ALSO
+
+Net::ACMEClient::Wrapper(3pm),
+acme-client(1)
+
+=head1 AUTHOR
+
+Devin Reade <gdr@gno.org>
+
+=head1 COPYRIGHT AND LICENSE
+
+Copyright (C) 2016 by Devin Reade
+
+This program is free software; you can redistribute it and/or modify
+it under the same terms as Perl itself, either Perl version 5.10.1 or,
+at your option, any later version of Perl 5 you may have available.
+
+=cut

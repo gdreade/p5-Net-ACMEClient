@@ -91,8 +91,8 @@ sub new {
 }
 
 # create accessors; do not put this in a method
-for my $field(qw(base_name, challenge_suffix challenge_ttl
-                 new_file_suffix)) {
+for my $field(qw(base_name challenge_suffix challenge_ttl
+                 new_file_suffix prog_name soa_suffix)) {
     my $slot = __PACKAGE__ . "::$field";
     no strict "refs";
     *$field = sub {
@@ -187,7 +187,7 @@ sub write_challenge {
 	croak "illegal characters in new_file_suffix";
     }
 
-    if ($ttl =~ m,^(\d+[smhdw])$,) {
+    if ($ttl =~ m,^(\d+[smhdw]?)$,) {
 	$ttl = $1;
     } else {
 	croak "illegal characters in challenge_ttl";
@@ -202,7 +202,7 @@ sub write_challenge {
     if ($challenge =~ m,^([-_a-z0-9]+\.[-_a-z0-9]+)$,i) {
 	$challenge = $1;
     } else {
-	croak "illegal characters in challenge";
+	croak "illegal characters in challenge (or malformed challenge)";
     }
 
     if ($suffix =~ m,^([-_\.a-z0-9]+)$,i) {
