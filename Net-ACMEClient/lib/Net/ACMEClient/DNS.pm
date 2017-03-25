@@ -22,7 +22,7 @@ Version 0.01
 =cut
 
 our @ISA = qw(Exporter);
-our @EXPORT_OK = qw(acme_challenge_rr_name untaint_fqdn);
+our @EXPORT_OK = qw(acme_challenge_rr_name encode_challenge untaint_fqdn);
 
 our $VERSION = '0.01';
 
@@ -145,6 +145,27 @@ sub acme_challenge_rr_name {
     ($fqdn eq '') && croak "fqdn cannot be empty";
 
     return "_acme-challenge." . $fqdn . ".";
+}
+
+=head2 encode_challenge($challenge)
+
+This global method encodes a challenge as required by the ACME protocol
+by computing the SHA256 hash of the challenge, and then encoding the
+hash in a URL-safe variant of Base64 encoding.
+
+Returns the encoded challenge.
+
+=cut
+
+sub encode_challenge {
+    my $challenge = shift;
+
+    defined($challenge) || croak "challenge was not defined";
+
+    my $encoded = sha256_base64($challenge);
+    $encoded =~ s,\+,-,g;
+    $encoded =~ s,/,_,g;
+    return $encoded;
 }
 
 =head2 expect_txt(resolver, name, record_value)
