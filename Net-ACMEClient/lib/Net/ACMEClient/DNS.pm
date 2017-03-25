@@ -6,6 +6,7 @@ use Carp;
 use File::Copy;
 use Net::DNS::Resolver;
 use Sys::Syslog qw(:standard :macros);
+use Exporter;
 
 use constant DEFAULT_QUERY_PAUSE => 2;
 use constant DEFAULT_PROPAGATION_TIMEOUT => 120;
@@ -20,15 +21,17 @@ Version 0.01
 
 =cut
 
-our $VERSION = '0.01';
+our @ISA = qw(Exporter);
+our @EXPORT_OK = qw(acme_challenge_rr_name untaint_fqdn);
 
+our $VERSION = '0.01';
 
 =head1 SYNOPSIS
 
 This module provides utility code for integrating B<acme-client>(1)
 with a DNS infrastructure.
 
-    use Net::ACMEClient::DNS;
+    use Net::ACMEClient::DNS qw/acme_challenge_rr_name untaint_fqdn/;
 
     # you should use the IPs of the appropriate public
     # authoritive nameservers here
@@ -42,8 +45,9 @@ with a DNS infrastructure.
 
 
     # this would be "_acme-challenge.www.example.com."
-    my $record_name =
-       Net::ACMEClient::DNS::acme_challenge_rr_name('www.example.com');
+    my $record_name = acme_challenge_rr_name('www.example.com');
+
+    my $untainted = untaint_fqdn($tainted_fully_qualified_domain_name);
     
 =head1 ATTRIBUTES
 
@@ -175,6 +179,29 @@ sub expect_txt {
     
     return undef;
 }
+
+=head2 untaint_fqdn
+
+This static method
+takes a single argument that should be a DNS fully qualfied domain
+name.  Verifies that it is of the proper form, untaints it, and
+returns the lowercase version.  Returns undef if any checks fail,
+or if the original value was undef.
+
+=cut
+        
+sub untaint_fqdn {
+    my $value = shift;
+
+    if (defined($value)) {
+	if ($value =~ m,^\s*([a-z0-9][-a-z0-9\.]*)\s*$,i) {
+	    my $fqdn = $1;
+	    return lc($fqdn);
+	}
+    }
+    return undef;
+}
+
 
 =head2 wait_for_challenge_propagation(fqdn, challenge, timeout, nameservers)
 
