@@ -5,6 +5,8 @@ use strict;
 use Carp;
 use File::Copy;
 
+use constant DEFAULT_CHALLENGE_TTL => 1;
+
 =head1 NAME
 
 Net::ACMEClient::DNS::ZoneEditor - limited zone file editor
@@ -111,7 +113,7 @@ sub init {
 
     # set default values
     $self->challenge_suffix('-chal-');
-    $self->challenge_ttl(1);
+    $self->challenge_ttl(DEFAULT_CHALLENGE_TTL);
     $self->new_file_suffix('-new');
     $self->old_file_suffix('-old');
     $self->soa_suffix('-soa');
@@ -132,7 +134,7 @@ sub init {
     if ($ttl < 1) {
 	# a TTL of zero can cause problems with some nameserver
 	# implementations.
-	$self->challenge_ttl(1);
+	$self->challenge_ttl(DEFAULT_CHALLENGE_TTL);
     }
 
     # set private members
@@ -277,7 +279,6 @@ sub write_challenge {
 
     defined($ttl) || croak "challenge_ttl was not defined";
 
-    defined($fqdn) || croak "fqdn was not defined";
     defined($challenge) || croak "challenge was not defined";
     defined($suffix) || croak "suffix was not defined";
 
@@ -289,12 +290,10 @@ sub write_challenge {
 	croak "illegal characters in challenge_ttl";
     }
 
-    if ($fqdn =~ m,^([a-z0-9]+[-\.a-z0-9]+)$,i) {
-	$fqdn = $1;
-    } else {
-	croak "illegal characters in fqdn";
-    }
-
+    $fqdn = untaint_fqdn($fqdn);
+    defined($fqdn)
+	|| croak "fqdn was not defined or contained illegal characters";
+    
     if ($challenge =~ m,^([-_a-z0-9]+\.[-_a-z0-9]+)$,i) {
 	$challenge = $1;
     } else {
