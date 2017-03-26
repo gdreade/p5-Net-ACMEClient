@@ -355,7 +355,8 @@ sub append_dot {
 =head2 lookup_nameservers(fqdn)
 
 Look up the authoritive nameservers for the fully qualified domain name
-B<fqdn>.  Returns an arrayref of IP addresses.
+B<fqdn>.  Returns an arrayref of IP addresses, or undef if there was
+a problem performing the lookup.
 
 =cut
 
@@ -405,7 +406,7 @@ sub lookup_nameservers {
 		}
 	    }
 	}
-    } else {
+    } elsif (uc($rcode) ne 'NXDOMAIN') {
 	syslog(LOG_ERR, "unexpected rcode for %s: %s", $fqdn, $rcode);
     }
 
@@ -505,8 +506,12 @@ sub wait_for_challenge_propagation {
 	}
     } else {
 	$nameservers = $self->lookup_nameservers($fqdn);
+	defined($nameservers) || return undef;
+
 	if (scalar(@$nameservers) < 1) {
-	    croak "no nameservers could be located for $fqdn";
+	    syslog(LOG_ERR, "no nameservers could be located for %s; "
+		   . "does the FQDN exist?", $fqdn);
+	    return undef;
 	}
     }
 
