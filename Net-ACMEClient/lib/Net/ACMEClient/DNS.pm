@@ -7,9 +7,14 @@ use File::Copy;
 use Net::DNS::Resolver;
 use Sys::Syslog qw(:standard :macros);
 use Exporter;
+use Scalar::Util qw(tainted);
+use Data::Dumper;
 
 use constant DEFAULT_QUERY_PAUSE => 2;
 use constant DEFAULT_PROPAGATION_TIMEOUT => 120;
+
+use constant IPV4_ONLY => 4;
+use constant IPV6_ONLY => 6;
 
 =head1 NAME
 
@@ -22,7 +27,8 @@ Version 0.01
 =cut
 
 our @ISA = qw(Exporter);
-our @EXPORT_OK = qw(acme_challenge_rr_name encode_challenge untaint_fqdn);
+our @EXPORT_OK = qw/acme_challenge_rr_name encode_challenge untaint_fqdn
+                   IPV4_ONLY IPV6_ONLY/;
 
 our $VERSION = '0.01';
 
@@ -43,12 +49,31 @@ with a DNS infrastructure.
        || die "challenges failed to appear on DNS servers within the "
             . "configured timeout";
 
+    # if you don't provide nameservers, the module will figure them out
+    $dns->wait_for_challenge_propagation('www.example.com', $challenge)
+       || die "challenges failed to appear on DNS servers within the "
+            . "configured timeout";
 
     # this would be "_acme-challenge.www.example.com."
     my $record_name = acme_challenge_rr_name('www.example.com');
 
     my $untainted = untaint_fqdn($tainted_fully_qualified_domain_name);
-    
+
+    # put it into a form that hides the key
+    my $suitable_for_dns = encode_challenge($raw_challenge_from_acme_client);
+
+=head1 CONSTANTS
+
+=head2 IPV4_ONLY
+
+This value is used to indicate that the caller is interested in IPv4 answers,
+only.
+
+=head2 IPV6 ONLY
+
+This value is used to indicate that the caller is interested in IPv6 answers,
+only.
+
 =head1 ATTRIBUTES
 
 The following attributes may be provided to the B<new> method:
@@ -58,6 +83,13 @@ The following attributes may be provided to the B<new> method:
 If set, then the debug flag will be provided to the Net::DNS modules
 to aid in debugging.  See L<Net::DNS::Resolver>.
 
+=head2 four_or_six
+
+If set to IPV4_ONLY, then only DNS A records will be queried.
+If set to IPV6_ONLY, then only DNS AAAA records will be queried.
+
+By default this is undef, so both A and AAAA queries will be used.
+
 =head2 query_pause
 
 When B<wait_for_challenge_propagation> is testing nameservers and there is
@@ -66,6 +98,12 @@ method will sleep this long before starting the next round of queries
 against such nameservers.
 
 By default this is 120 seconds.
+
+=head2 use_dnssec
+
+If set, then the Net::DNS::Resolver B<dnssec> flag will be set such
+that DNSSEC validation will be performed if available.  By default it 
+is set.
 
 =head2 use_syslog
 
@@ -88,7 +126,8 @@ sub new {
 }
 
 # create accessors; do not put this in a method
-for my $field(qw(debug_queries query_pause use_syslog)) {
+for my $field(qw(debug_queries four_or_six query_pause
+                 use_dnssec use_syslog)) {
     my $slot = __PACKAGE__ . "::$field";
     no strict "refs";
     *$field = sub {
@@ -108,6 +147,7 @@ sub init {
     # set default values
     $self->debug_queries(0);
     $self->query_pause(DEFAULT_QUERY_PAUSE);
+    $self->use_dnssec(1);
     $self->use_syslog(0);
     
     # accept initial values passed in constructor
@@ -201,6 +241,183 @@ sub expect_txt {
     return undef;
 }
 
+=head2 fqdn_to_ip(fqdn, resolver)
+
+Looks up fqdn and returns an arrayref of IPs associated with that name.
+If fqdn looks like an IP, it will be returned directly in the arrayref.
+Otherwise, address records will be looked up for the given fqdn.
+
+If resolver is undef, then this method will use a new resolver based on
+the system default recursive resolver.
+
+If four_or_six is the number 4, then only 'A' records will be queried.
+
+
+=cut
+    
+sub fqdn_to_ip {
+    my $self = shift;
+    my $fqdn = shift;
+    my $resolver = shift;
+
+    defined($fqdn) || croak "fqdn is undefined";
+
+    my $four_or_six = $self->four_or_six;
+    my $result = [];
+
+    if ($fqdn =~ m,^([0-9\.]+)$,) {
+	# it looks like an IPv4 address already; just use it
+	push(@$result, ($1))
+	    unless (defined($four_or_six) && ($four_or_six == IPV6_ONLY));
+	return $result;
+    } elsif ($fqdn =~ m,^([a-f0-9]+:[:a-f0-9]+)$,i) {
+	# it looks like an IPv6 address already; just use it
+	push(@$result, ($1))
+	    unless (defined($four_or_six) && ($four_or_six == IPV4_ONLY));
+	return $result;
+    }
+
+    if (!defined($resolver)) {
+	$resolver = Net::DNS::Resolver->new(recurse => 1,
+					    dnssec => $self->use_dnssec,
+					    debug => $self->debug_queries);
+    }
+
+    if (!defined($four_or_six) || ($four_or_six == IPV4_ONLY)) {
+	my $subresult = $self->fqdn_to_ip4($fqdn, $resolver);
+	push(@$result, @$subresult);
+    }
+    if (!defined($four_or_six) || ($four_or_six == IPV6_ONLY)) {
+	my $subresult = $self->fqdn_to_ip6($fqdn, $resolver);
+	push(@$result, @$subresult);
+    }
+
+    return $result;
+}
+
+sub fqdn_to_ip4 {
+    my $self = shift;
+    my $fqdn = shift;
+    my $resolver = shift;
+
+    my $result = [];
+
+    $fqdn = $self->append_dot($fqdn);
+
+    my $packet = $resolver->query($fqdn);
+    if (defined($packet)) {
+	my @answers = $packet->answer;
+	foreach my $answer (@answers) {
+	    if (uc($answer->type) eq 'A') {
+		my $a = untaint_ip($answer->address);
+		defined($a) && push(@$result, ($a));
+	    }
+	}
+    }
+    return $result;    
+}
+
+sub fqdn_to_ip6 {
+    my $self = shift;
+    my $fqdn = shift;
+    my $resolver = shift;
+
+    my $result = [];
+
+    $fqdn = $self->append_dot($fqdn);
+
+    my $packet = $resolver->query($fqdn, 'AAAA');
+    if (defined($packet)) {
+	my @answers = $packet->answer;
+	foreach my $answer (@answers) {
+	    if (uc($answer->type) eq 'AAAA') {
+		my $a = untaint_ip($answer->address_short);
+		defined($a) && push(@$result, ($a));
+	    }
+	}
+    }
+    return $result;
+}
+
+sub append_dot {
+    my $self = shift;
+    my $fqdn = shift;
+
+    if (defined($fqdn)) {
+	if ($fqdn =~ m,\.$,) {
+	    return $fqdn;
+	}
+	return $fqdn . '.';
+    }
+    return undef;
+}
+
+=head2 lookup_nameservers(fqdn)
+
+Look up the authoritive nameservers for the fully qualified domain name
+B<fqdn>.  Returns an arrayref of IP addresses.
+
+=cut
+
+sub lookup_nameservers {
+    my $self = shift;
+    my $fqdn = shift;
+    my $recursing = shift;
+
+    my $result = [];
+
+    $fqdn = untaint_fqdn($fqdn);
+    defined($fqdn) || die "fqdn is undefined";
+    
+    # we bootstrap by using the system's configured recursive nameservers
+    my $resolver = Net::DNS::Resolver->new(recurse => 1,
+					   dnssec => $self->use_dnssec,
+					   debug => $self->debug_queries);
+
+    my $packet = $resolver->send($fqdn, 'NS');
+    if (!defined($packet)) {
+	syslog(LOG_ERR, "no response was received for %s: are the "
+	       . "system nameservers unavailable?", $fqdn);
+	return undef;
+    }
+
+    my $rcode = $packet->header->rcode;
+    if (uc($rcode) eq 'NOERROR') {
+
+	# fqdn exists
+	my @answers = $packet->answer;
+	my @authorities = $packet->authority;
+	if (scalar(@answers) > 0) {
+	    foreach my $answer (@answers) {
+		if (uc($answer->type) eq 'NS') {
+		    my $ns = $answer->nsdname;
+		    if (defined($ns)) {
+			my $ips = $self->fqdn_to_ip($ns, $resolver);
+			push(@$result, @$ips);
+		    }
+		}
+	    }
+	} elsif (scalar(@authorities) > 0) {
+	    foreach my $auth (@authorities) {
+		if (uc($auth->type) eq 'SOA') {
+		    ($recursing) && die "infinite recursion?";
+		    return $self->lookup_nameservers($auth->name);
+		}
+	    }
+	}
+    } else {
+	syslog(LOG_ERR, "unexpected rcode for %s: %s", $fqdn, $rcode);
+    }
+
+    my $untainted_result = [];
+    foreach my $ip (@$result) {
+	my $untainted_ip = untaint_ip($ip);
+	push(@$untainted_result, ($untainted_ip)) if defined($untainted_ip);
+    }
+    
+    return $untainted_result;
+}
+
 =head2 untaint_fqdn
 
 This static method
@@ -223,6 +440,16 @@ sub untaint_fqdn {
     return undef;
 }
 
+sub untaint_ip {
+    my $value = shift;
+    if (defined($value)) {
+	if (($value =~ m,^([0-9\.]+)$,)
+	    || ($value =~ m,^([a-f0-9]+:[:a-f0-9]+)$,i)) {
+	    return $1;
+	}
+    }
+    return undef;
+}
 
 =head2 wait_for_challenge_propagation(fqdn, challenge, timeout, nameservers)
 
@@ -255,21 +482,32 @@ sub wait_for_challenge_propagation {
     my $nameservers = [];
     if (defined($nameserver_arg)) {
 	my $r = ref($nameserver_arg);
+	# we use fqdn_to_ip here because if the user passes in names
+	# rather than IPs, we need to translate them to IPs so that the
+	# resolvers don't get untainting errors down in their innards.
 	if ($r eq '') {
-	    push(@$nameservers, ($nameserver_arg)) if ($nameserver_arg ne '');
+	    if ($nameserver_arg ne '') {
+		my $ips = $self->fqdn_to_ip($nameserver_arg);
+		push(@$nameservers, @$ips);
+	    }
 	} elsif ($r = 'ARRAY') {
-	    push(@$nameservers, @$nameserver_arg);
+	    foreach my $na (@$nameserver_arg) {
+		my $ips = $self->fqdn_to_ip($na);
+		push(@$nameservers, @$ips);
+	    }
 	} else {
 	    croak "the fourth argument to wait_for_challenge_propagation "
 		. "must be a nameserver IP or an arrayref containing "
 		. "nameserver IPs";
 	}
+	if (scalar(@$nameservers) < 1) {
+	    croak "no nameservers were specified for $fqdn";
+	}
     } else {
-	die "lookup of nameservers not yet implemented";
-    }
-
-    if (scalar(@$nameservers) < 1) {
-	croak "no nameservers were specified";
+	$nameservers = $self->lookup_nameservers($fqdn);
+	if (scalar(@$nameservers) < 1) {
+	    croak "no nameservers could be located for $fqdn";
+	}
     }
 
     # set up the resolvers, one per nameserver
@@ -277,7 +515,7 @@ sub wait_for_challenge_propagation {
     foreach my $ns (@$nameservers) {
 	my $resolver = Net::DNS::Resolver->new(nameservers => [$ns],
 					       recurse => 0,
-					       dnssec => 1,
+					       dnssec => $self->use_dnssec,
 					       debug => $self->debug_queries);
 	$resolvers_by_nameserver{$ns} = $resolver;
     }
@@ -331,7 +569,6 @@ sub wait_for_challenge_propagation {
 		   . "propagation", $self->query_pause) if ($self->use_syslog);
 	    sleep($self->query_pause);
 	}
-
     }
 
     # success
