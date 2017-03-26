@@ -4,8 +4,15 @@ use warnings;
 use strict;
 use Carp;
 use File::Copy;
+use Exporter;
+use Net::ACMEClient::DNS qw/untaint_fqdn/;
 
 use constant DEFAULT_CHALLENGE_TTL => 1;
+
+use constant DEFAULT_CHALLENGE_SUFFIX => '-chal-';
+use constant DEFAULT_NEW_FILE_SUFFIX => '-new';
+use constant DEFAULT_OLD_FILE_SUFFIX => '-old';
+use constant DEFAULT_SOA_SUFFIX => '-soa';
 
 =head1 NAME
 
@@ -16,6 +23,15 @@ Net::ACMEClient::DNS::ZoneEditor - limited zone file editor
 Version 0.01
 
 =cut
+
+our @ISA = qw(Exporter);
+our @EXPORT_OK = qw/DEFAULT_CHALLENGE_TTL DEFAULT_CHALLENGE_SUFFIX
+                    DEFAULT_NEW_FILE_SUFFIX DEFAULT_OLD_FILE_SUFFIX
+                    DEFAULT_SOA_SUFFIX/;
+our %EXPORT_TAGS = ( macros =>
+		     [qw/DEFAULT_CHALLENGE_TTL DEFAULT_CHALLENGE_SUFFIX
+                    DEFAULT_NEW_FILE_SUFFIX DEFAULT_OLD_FILE_SUFFIX
+                    DEFAULT_SOA_SUFFIX/]);
 
 our $VERSION = '0.01';
 
@@ -94,7 +110,7 @@ sub new {
 
 # create accessors; do not put this in a method
 for my $field(qw(base_name challenge_suffix challenge_ttl
-                 new_file_suffix old_file_suffix prog_name soa_suffix)) {
+                 new_file_suffix old_file_suffix soa_suffix)) {
     my $slot = __PACKAGE__ . "::$field";
     no strict "refs";
     *$field = sub {
@@ -112,11 +128,11 @@ sub init {
     my $self = shift;
 
     # set default values
-    $self->challenge_suffix('-chal-');
+    $self->challenge_suffix(DEFAULT_CHALLENGE_SUFFIX);
     $self->challenge_ttl(DEFAULT_CHALLENGE_TTL);
-    $self->new_file_suffix('-new');
-    $self->old_file_suffix('-old');
-    $self->soa_suffix('-soa');
+    $self->new_file_suffix(DEFAULT_NEW_FILE_SUFFIX);
+    $self->old_file_suffix(DEFAULT_OLD_FILE_SUFFIX);
+    $self->soa_suffix(DEFAULT_SOA_SUFFIX);
     
     # accept initial values passed in constructor
     while (1) {
@@ -257,7 +273,7 @@ sub increment_soa {
 =head2 write_challenge(fqdn, challenge, suffix)
 
 Write a DNS challenge file, where the filename is constructed as described
-in the B<challenge_suffix) description, above.  The file must already exist,
+in the B<challenge_suffix>) description, above.  The file must already exist,
 and should either be empty or only contain old challenges; it's contents
 will be replaced with the new challenge.
 
@@ -294,7 +310,7 @@ sub write_challenge {
     defined($fqdn)
 	|| croak "fqdn was not defined or contained illegal characters";
     
-    if ($challenge =~ m,^([-_a-z0-9]+\.[-_a-z0-9]+)$,i) {
+    if ($challenge =~ m,^([-_a-z0-9]+)$,i) {
 	$challenge = $1;
     } else {
 	croak "illegal characters in challenge (or malformed challenge)";

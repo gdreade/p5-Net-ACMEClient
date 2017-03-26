@@ -7,8 +7,7 @@ use File::Copy;
 use Net::DNS::Resolver;
 use Sys::Syslog qw(:standard :macros);
 use Exporter;
-use Scalar::Util qw(tainted);
-use Data::Dumper;
+use Digest::SHA qw(sha256_base64);
 
 use constant DEFAULT_QUERY_PAUSE => 2;
 use constant DEFAULT_PROPAGATION_TIMEOUT => 120;
@@ -28,7 +27,7 @@ Version 0.01
 
 our @ISA = qw(Exporter);
 our @EXPORT_OK = qw/acme_challenge_rr_name encode_challenge untaint_fqdn
-                   IPV4_ONLY IPV6_ONLY/;
+                   IPV4_ONLY IPV6_ONLY DEFAULT_PROPAGATION_TIMEOUT/;
 
 our $VERSION = '0.01';
 
