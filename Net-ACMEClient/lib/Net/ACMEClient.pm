@@ -74,7 +74,7 @@ sub init {
     my $self = shift;
 
     # set default values
-    $self->use_syslog(0);
+    $self->use_syslog(1);
     $self->syslog_facility(LOG_USER);
     $self->log_stderr(0);
     
