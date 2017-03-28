@@ -88,6 +88,11 @@ renamed to the final file name.  The name of the temporary file is
 based on the final file name, and has B<new_file_suffix> appended to the end.
 The default value is B<-new>.
 
+=head2 old_file_suffix
+
+When writing files and an old copy is saved, this is the file suffix to
+use for the copy.
+
 =head2 soa_suffix
 
 This suffix is appended to B<base_name> to derive the filename to write
@@ -156,6 +161,7 @@ sub init {
     # set private members
 }
 
+# an internal function for untainting various path attributes
 sub untaint_path_attrs {
     my $self = shift;
 
@@ -176,6 +182,12 @@ sub untaint_path_attrs {
     defined($old_file_suffix) && $self->old_file_suffix($old_file_suffix);
 }
 
+=head2 untaint_suffix(suffix)
+
+Untaint a file suffix.
+
+=cut
+    
 sub untaint_suffix {
     my $self = shift;
     my $suffix = shift;

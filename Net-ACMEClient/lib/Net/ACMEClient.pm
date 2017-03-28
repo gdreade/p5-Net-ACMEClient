@@ -39,6 +39,32 @@ Perl integration.
     ...
     $client->shutdown;
 
+=head1 ATTRIBUTES
+
+The following attributes may be provided to the B<new> method:
+
+=head2 prog_name
+
+This is the program name.  Mandatory.  Often one can just use __FILE__.
+
+=head2 config_file
+
+The full pathname to the configuration file.
+
+=head2 use_syslog
+
+If set, then the diagnostics are sent to syslog.
+
+=head2 syslog_facility
+
+if use_syslog is set, this attribute controls the facility.  By default
+it is I<LOG_USER>.
+
+=head2 log_stderr
+
+If use_syslog is set, this controls whether or not messages are also 
+sent to stderr.
+
 =head1 SUBROUTINES/METHODS
 
 =head2 new
@@ -180,6 +206,10 @@ sub conf_locations {
     my $locations = [ '/etc', '/usr/local/etc' ];
     return $locations;
 }
+
+=head2 config
+
+After B<setup> is complete, this method returns the current configuration.
 
 =head2 info(message)
 

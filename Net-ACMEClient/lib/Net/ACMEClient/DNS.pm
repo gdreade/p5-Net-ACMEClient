@@ -440,6 +440,15 @@ sub untaint_fqdn {
     return undef;
 }
 
+=head2 untaint_ip
+
+This static method
+takes a single argument that should be either an IPv4 or IPv6 address,
+untaints it, and returns the untainted version. 
+Returns undef if any checks fail or if the original valu ewas undef.
+
+=cut
+
 sub untaint_ip {
     my $value = shift;
     if (defined($value)) {

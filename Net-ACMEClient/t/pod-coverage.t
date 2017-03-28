@@ -15,4 +15,14 @@ eval "use Pod::Coverage $min_pc";
 plan skip_all => "Pod::Coverage $min_pc required for testing POD coverage"
     if $@;
 
-all_pod_coverage_ok();
+# all_pod_coverage_ok();
+
+plan tests => 3;
+pod_coverage_ok( "Net::ACMEClient",
+		 { trustme => [qr/^(new|init|load_config|conf_locations)$/] });
+
+pod_coverage_ok( "Net::ACMEClient::DNS",
+		 { trustme => [qr/^(new|init|fqdn_to_ip4|fqdn_to_ip6|append_dot)$/] });
+
+pod_coverage_ok( "Net::ACMEClient::DNS::ZoneEditor",
+		 { trustme => [qr/^(new|init|untaint_path_attrs)$/] });
