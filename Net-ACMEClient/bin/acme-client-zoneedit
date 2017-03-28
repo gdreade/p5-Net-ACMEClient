@@ -296,11 +296,17 @@ acme-client-zoneedit --fqdn FQDN --challenge CHALLENGE
 B<acme-client-zoneedit> is a helper program for the 
 B<acme-client>(1) Let's Encrypt ACME protocol client by Kristaps Dzonsons
 
+It is normally invoked with the pair of arguments
+B<--fqdn> and B<--challenge> (or B<--encoded-challenge>) which will take
+the output from B<acme-client> and ensure the challenge appears in the
+appropriate DNS zones.
+
+B<acme-client-zoneedit> would normally be run on the master authoritive
+name server (which is not necessarily the same machine running
+B<acme-client>).
 
 
 =head1 OPTIONS
-
-Write something here.  Also:
 
 =over 8
 
@@ -314,10 +320,8 @@ Print the manual page and exit.
 
 =item B<--config>=I<filename> | B<-c>I<filename>
 
-Use the configuration file I<filename>.  If not specified, this program
-will use the first found of
-B</etc/acme-client-zoneedit.conf> or
-B</usr/local/etc/acme-client-zoneedit.conf>
+Use the configuration file I<filename>.  If not specified, the default
+will be used.  See the B<CONFIGURATION> section, below.
 
 =item B<--fqdn>
 
@@ -349,9 +353,68 @@ B<--no-wait> disables this verification.
 
 =back
 
+=head1 CONFIGURATION
+
+On startup, B<acme-client-zoneedit> will load its configuration file.
+If it is not specified explicitly on the command line, it will look for
+the file B<acme-client-zoneedit.conf> in B</etc> and B</usr/local/etc>.
+
+The following is a sample configuration file.  Only a few parameters are
+mandatory.  Those that have reasonable defaults are shown commented out.
+Parameter names typically match those of attribute names in the supporting
+Perl modules mentioned in the SEE ALSO section, below.
+
+=over 8
+
+ # debug_queries = 0
+ # use_ipv4 = 1
+ # use_ipv6 = 1
+ # use_syslog = 1
+
+ reload_command = /usr/bin/true
+
+ # We need a section for each FQDN that we permit to be processed.
+ [www.example.com]
+
+ # A mandatory property.  This is the base name of the files that
+ # will be created or updated.  It can be the full pathname to
+ # the original zone file, but you may find it more convenient to
+ # put these files in another directory.  So for example, if your
+ # main zone file for this domain is
+ #    /path/to/master/example.com
+ # you may want to use:
+ #    /path/to/acme-client/example.com
+ # and alter your $INCLUDEs appropriately.
+
+ base_name = /var/nsd/zones/acme/example.com
+
+ # The whitespace-delimited set of nameservers that are checked
+ # to ensure the challenge has propagated.  This can be either
+ # by hostname or IP (which of course should be routable IPs, 
+ # unlike this example). If this list isn't provided, the list of
+ # nameservers is deduced from the appropriate DNS NS records for
+ # this host.
+ #
+ # Beware of split-horizon (multiple view) DNS situations and 
+ # ensure that the nameservers you are checking give the same
+ # answers for the challege as those that will be seen by the 
+ # ACME servers.
+
+ #nameservers = ns1.example.com 192.168.1.55
+
+ # The maximum amount of time that we'll wait for the challenge
+ # to propagate to the nameservers before we give up and consider
+ # the operation to have failed.
+
+ #query_timeout = 120
+
+=back
+
 =head1 SEE ALSO
 
 acme-client(1) (https://github.com/kristapsdz/acme-client)
+
+acme-client-wrapper(1)
 
 Net::ACMEClient(3pm),
 Net::ACMEClient::DNS(3pm),
