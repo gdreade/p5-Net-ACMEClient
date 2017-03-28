@@ -14,7 +14,8 @@ WriteMakefile(
     PREREQ_PM => {
         'Test::More' => 0,
 	'Net::DNS' => 0,
-	'Net::DNS::SEC' => 0,
+	'Net::DNS::SEC' => 1.02,
+	'Config::Tiny' => 2.14
     },
     dist                => { COMPRESS => 'gzip -9f', SUFFIX => 'gz', },
     clean               => { FILES => 'Net-ACMEClient-*' },
