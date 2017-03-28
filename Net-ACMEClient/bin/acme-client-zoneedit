@@ -21,7 +21,8 @@ BEGIN {
     # We use taint mode and the env(1) indirection to launch the program,
     # so using the -I argument won't work.
 
-    my @mods = ( "Net::ACMEClient::DNS::ZoneEditor",
+    my @mods = ( "Net::ACMEClient",
+		 "Net::ACMEClient::DNS::ZoneEditor",
 		 "Net::ACMEClient::DNS"
 	);
 
@@ -62,16 +63,13 @@ local $ENV{PATH} = "/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin"
     . ":/usr/local/bin" . "";
 delete @ENV{qw(IFS CDPATH ENV BASH_ENV)};
 
-my $config; # the parsed configuration
-
 # command line options
 my ($man, $help);
 my ($fqdn, $challenge, $encoded_challenge);
-my $wait;
-my $config_file = '/usr/local/etc/acme-client-zoneedit.conf';
+my $config_file;
+my $wait = 1;
 
 # defaults to be overridden in config file
-my $use_syslog = 1;
 my $use_dnssec = 1;
 my $debug_queries = 0;
 my $use_ipv4 = 1;
@@ -81,15 +79,16 @@ my $challenge_suffix = DEFAULT_CHALLENGE_SUFFIX;
 my $new_file_suffix = DEFAULT_NEW_FILE_SUFFIX;
 my $old_file_suffix = DEFAULT_OLD_FILE_SUFFIX;
 my $soa_suffix = DEFAULT_SOA_SUFFIX;
+my $reload_command;
 
 Getopt::Long::Configure ("bundling", "no_ignore_case");
 GetOptions("man" => \$man,
 	   "help|h" => \$help,
+	   "config|c=s" => \$config_file,
 	   "fqdn=s" => \$fqdn,
 	   "challenge=s" => \$challenge,
 	   "encoded-challenge=s" => \$encoded_challenge,
-	   "config|c=s" => \$config_file,
-	   "wait|w" => \$wait)
+	   "wait!" => \$wait)
     || pod2usage(2);
 	   
 #
@@ -97,6 +96,12 @@ GetOptions("man" => \$man,
 #
 pod2usage(1) if defined($help);
 pod2usage(-exitval => 0, -verbose => 2) if defined($man);
+
+my $client =
+    Net::ACMEClient->new(prog_name => __FILE__,
+			 config_file => $config_file);
+
+$client->setup || die "setup failed";
 
 &read_config;
 
@@ -108,61 +113,55 @@ if ($use_ipv4 && !$use_ipv6) {
 } elsif (!$use_ipv4 && $use_ipv6) {
     $four_or_six = Net::ACMEClient::DNS->IPV6_ONLY;
 } elsif (!$use_ipv4 && !$use_ipv6) {
-    fatal("at least one of IPv4 or IPv6 must be enabled");
+    $client->fatal("at least one of IPv4 or IPv6 must be enabled");
 }
 
 if (defined($fqdn) || defined($challenge) || defined($encoded_challenge)) {
     if (!defined($fqdn)) {
-	fatal("--fqdn must be specified when either --challenge or "
-	      . "--encoded-challenge is given");
+	$client->fatal("--fqdn must be specified when either --challenge or "
+		       . "--encoded-challenge is given");
     }
     if (!defined($challenge) && !defined($encoded_challenge)) {
-	fatal("at least one of --challenge or --encoded-challenge must be "
-	      . "specified when using --fqdn");
+	$client->fatal("at least one of --challenge or --encoded-challenge " .
+		       "must be specified when using --fqdn");
     }
     if (defined($challenge) && defined($encoded_challenge)) {
-	fatal("only one of --challenge or --encoded-challenge may be "
-	      . "specified when using --fqdn");
+	$client->fatal("only one of --challenge or --encoded-challenge may " .
+		       "be specified when using --fqdn");
     }
     if (defined($challenge)) {
 	$encoded_challenge = 
 	    Net::ACMEClient::DNS->encode_challenge($challenge);
     }
-
-    
-
-    printf (STDERR "fqdn: %s encoded challenge: %s\n", $fqdn, $encoded_challenge);
 }
 
 
 # logic begins
+my $ret;
 if (defined($fqdn)) {
-    my $ret = &process_challenge;
-    exit($ret);
+    $ret = &process_challenge;
 }
-
-#my $fqdn = 'www.example.com';
-#my $challenge = 'the_cha.ll77enge';
-
-#my $fqdn = 'www.cydonia.ca';
-#my $challenge = 'fbJ0HWRdI_bBSGrUvJc-6GIwhrmyHDDCPRzDNtqvP1A';
-
-exit(0);
+$client->shutdown;
+exit($ret);
 
 
 sub process_challenge {
-    # get parameters from config
+    my $config = $client->config;
+    
+    # get zone-specific parameters from config
     my $query_timeout = Net::ACMEClient::DNS->DEFAULT_PROPAGATION_TIMEOUT;
     my $v = $config->{$fqdn}->{query_timeout};
     defined($v) && (int($v) > 0) && ($query_timeout = int($v));
 
     my $section = $config->{$fqdn};
-    defined($section) ||  fatal("no section for $fqdn was found in " .
-				 "configuration file $config_file");
+    defined($section) ||
+	$client->fatal("no section for $fqdn was found in " .
+		       "configuration file " . $client->config_file);
 
     my $base_name = $section->{base_name};
-    defined($base_name) || fatal("base_name was not set in the [$fqdn] " .
-				 "section of $config_file");
+    defined($base_name) ||
+	$client->fatal("base_name was not set in the [$fqdn] " .
+		       "section of " . $client->config_file);
 
     my $nameservers = undef;
     my $nameserver_list = $section->{nameservers};
@@ -176,11 +175,24 @@ sub process_challenge {
     my $host_suffix = $section->{host_suffix};
     if (!defined($host_suffix) || (length($host_suffix) == 0)) {
 	# assume that we can use the first component of the fqdn
-	if ($fqdn =~ m,^([a-z0-9]+),) {
+	if ($fqdn =~ m,^([a-z0-9]+[-a-z0-9]*),i) {
 	    $host_suffix = $1;
 	} else {
-	    fatal("in section [$fqdn] of $config_file host_suffix was not ".
-		  "set and could not be inferred");
+	    $client->fatal("in section [$fqdn] of " . $client->config_file .
+			   "host_suffix was not set and " .
+			   "could not be inferred");
+	}
+    }
+
+    my $zone = $section->{zone};
+    if (!defined($zone)) {
+	# assume that we can use all but the first component of the fqdn
+	if ($fqdn =~ m,^([a-z0-9]+[-a-z0-9]*)\.([-\.a-z0-9]+),i) {
+	    $zone = $2;
+	} else {
+	    $client->fatal("in section [$fqdn] of " . $client->config_file .
+			   "zone was not set and " .
+			   "could not be inferred");
 	}
     }
 
@@ -188,7 +200,7 @@ sub process_challenge {
     my $dns = Net::ACMEClient::DNS->new(debug_queries => $debug_queries,
 					four_or_six => $four_or_six,
 					use_dnssec => $use_dnssec,
-					use_syslog => $use_syslog);
+					use_syslog => $client->use_syslog);
 
     my $editor = Net::ACMEClient::DNS::ZoneEditor->new(
 	base_name => $base_name,
@@ -200,30 +212,30 @@ sub process_challenge {
     );
 
     $editor->write_challenge($fqdn, $encoded_challenge, $host_suffix)
-	|| die "failed to write challenge file for $fqdn";
-    $editor->increment_soa || die "failed to increment SOA serial for $fqdn";
-    
-    # TODO need reload next
+	|| $client->fatal("failed to write challenge file for $fqdn");
+    $editor->increment_soa
+	|| $client->fatal("failed to increment SOA serial for $fqdn");
 
-    if (0) {
-    $dns->wait_for_challenge_propagation($fqdn, $challenge, $query_timeout,
-					 $nameservers)
-	or die "challenges failed to appear for $fqdn on configured DNS "
-	. "servers within the configured timeout";
+    $client->do_via_system($reload_command, $zone)
+	|| $client->fatal("$reload_command failed for zone $zone");
 
+    if ($wait) {
+	$dns->wait_for_challenge_propagation($fqdn, $challenge, $query_timeout,
+					     $nameservers)
+	    || $client->fatal("challenges failed to appear for $fqdn on " .
+			      "configured DNS servers within the " .
+			      "configured timeout");
     }
+
+    $client->info("updated challenge for $fqdn");
     
     1;
 }
 
 sub read_config {
-    $config = Config::Tiny->read($config_file)
-	or die "failed to read configuration file $config_file";
+    my $config = $client->config;
 
-    my $v = $config->{_}->{use_syslog};
-    defined($v) && ($use_syslog = $v);
-
-    $v = $config->{_}->{use_dnssec};
+    my $v = $config->{_}->{use_dnssec};
     defined($v) && ($use_dnssec = $v);
 
     $v = $config->{_}->{debug_queries};
@@ -249,60 +261,23 @@ sub read_config {
 
     $v = $config->{_}->{soa_suffix};
     defined($v) && (length($v) > 0) && ($soa_suffix = $v);
-    
+
+    $v = $config->{_}->{reload_command};
+    if (!defined($v)) {
+	$client->fatal("reload_command was not specified in " .
+		       $client->config_file);
+    } elsif ($v =~ m,^([-_\./a-z0-9]+)$,) {
+	$reload_command = $1;
+	if (! -x $reload_command) {
+	    $client->fatal("reload_command $reload_command was not found " .
+			   "or is not executable");
+	}
+    }
+
     1;
 }
 
-sub fatal {
-    my $msg = shift;
-    printf(STDERR "%s\n", $msg);
-    exit(1);
-}
-
-my $editor = Net::ACMEClient::DNS::ZoneEditor->new(
-    base_name => '/tmp/acme.example.com'
-    );
-
-#my $ret = $editor->run(\@ARGV);
-
-my $ret;
-
-#my $ret = $editor->write_challenge($fqdn, $challenge, 'www');
-#($ret) || die "write_challenge failed";
-
-# $editor->increment_soa || die "failed to increment SOA";
-
-if (1) {
-    my $dns = Net::ACMEClient::DNS->new(use_syslog => 1, debug_queries => 0);
-
-    my $dns_servers = undef;
-
-    if (1) {
-    $dns->wait_for_challenge_propagation($fqdn, $challenge, undef,
-					 $dns_servers)
-	or die "challenges failed to appear on configured DNS servers within "
-	. "the configured timeout";
-    }
-
-}
-
-if (0) {
-    my $dns = Net::ACMEClient::DNS->new(use_syslog => 1, debug_queries => 0,
-					four_or_six => 
-					Net::ACMEClient::DNS->IPV4_ONLY);
-
-    my $tries = [ 'nothing.example.com' ];
-    foreach my $try (@$tries) {
-	my $ret = $dns->lookup_nameservers($try);
-	defined($ret) || die "lookup failed for $try";
-
-	foreach my $ns (@$ret) {
-	    print STDERR "for $try found nameserver $ns\n";
-	}
-    }
-    
-}
-exit(0);
+1;
 
 __END__
 
@@ -312,15 +287,15 @@ acme-client-zoneedit - Zone editing helper for acme-client(1)
 
 =head1 SYNOPSIS
 
-acme-client_zoneedit --man
+acme-client-zoneedit --man
 
-acme-client_zoneedit --fqdn FQDN --challenge CHALLENGE
-
-acme-client_zoneedit [options] domain [altname ...]
+acme-client-zoneedit --fqdn FQDN --challenge CHALLENGE
 
 =head1 DESCRIPTION
 
-B<acme-client_zoneedit> ... does something
+B<acme-client-zoneedit> is a helper program for the 
+B<acme-client>(1) Let's Encrypt ACME protocol client by Kristaps Dzonsons
+
 
 
 =head1 OPTIONS
@@ -337,13 +312,20 @@ Print a brief help message and exit.
 
 Print the manual page and exit.
 
+=item B<--config>=I<filename> | B<-c>I<filename>
+
+Use the configuration file I<filename>.  If not specified, this program
+will use the first found of
+B</etc/acme-client-zoneedit.conf> or
+B</usr/local/etc/acme-client-zoneedit.conf>
+
 =item B<--fqdn>
 
 The fully qualified domain name of the host for which a challenge 
 should be added or updated.  If provided, then exactly one of
 B<--challenge> or B<--encoded-challenge> must also be provided.
 
-=item B<--challenge>=I<value> | B<-c>I<value>
+=item B<--challenge>=I<value>
 
 Specify the raw challenge as provided by B<acme-client>(1).
 
@@ -353,18 +335,33 @@ the B<--encoded-challenge> flag.
 
 If this option is specified, then B<--fqdn> must also be specified.
 
-=item B<--encoded-challenge>=I<value> | B<-e>I<value>
+=item B<--encoded-challenge>=I<value>
 
 Specify the encoded challenge to use.
 
 If this option is specified, then B<--fqdn> must also be specified.
 
+=item B<--no-wait>
+
+Normally this program will wait and verify that the challenge has
+propagated to the appropriate authoritive nameservers.  Specifying
+B<--no-wait> disables this verification.
+
 =back
 
 =head1 SEE ALSO
 
+acme-client(1) (https://github.com/kristapsdz/acme-client)
+
+Net::ACMEClient(3pm),
 Net::ACMEClient::DNS(3pm),
-acme-client(1)
+Net::ACMEClient::DNS::ZoneEditor(3pm)
+
+=head1 ACKNOWLEDGEMENTS
+
+Thanks to Kristaps Dzonsons for his original work on B<acme-client>(1)
+and to the various OpenBSD developers for their modifications and 
+including B<acme-client> in the OpenBSD base distribution.
 
 =head1 AUTHOR
 
