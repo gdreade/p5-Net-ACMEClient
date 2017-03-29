@@ -131,7 +131,7 @@ if (defined($fqdn) || defined($challenge) || defined($encoded_challenge)) {
     }
     if (defined($challenge)) {
 	$encoded_challenge = 
-	    Net::ACMEClient::DNS->encode_challenge($challenge);
+	    Net::ACMEClient::DNS::encode_challenge($challenge);
     }
 }
 
@@ -220,8 +220,8 @@ sub process_challenge {
 	|| $client->fatal("$reload_command failed for zone $zone");
 
     if ($wait) {
-	$dns->wait_for_challenge_propagation($fqdn, $challenge, $query_timeout,
-					     $nameservers)
+	$dns->wait_for_challenge_propagation($fqdn, $encoded_challenge,
+					     $query_timeout, $nameservers)
 	    || $client->fatal("challenges failed to appear for $fqdn on " .
 			      "configured DNS servers within the " .
 			      "configured timeout");
