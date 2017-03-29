@@ -462,7 +462,7 @@ sub untaint_ip {
 
 =head2 wait_for_challenge_propagation(fqdn, challenge, timeout, nameservers)
 
-Wait for an ACME challenge B<challenge> based on B<fqdn> to appear on
+Wait for an encoded ACME challenge B<challenge> based on B<fqdn> to appear on
 a set of nameservers.  B<nameservers> can be a single nameserver specification
 (an IP), or an arrayref of such specifications.
 

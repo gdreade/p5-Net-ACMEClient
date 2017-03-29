@@ -17,6 +17,7 @@ WriteMakefile(
 	'Net::DNS::SEC' => 1.02,
 	'Config::Tiny' => 2.14
     },
+    INST_BIN            => 'bin',
     dist                => { COMPRESS => 'gzip -9f', SUFFIX => 'gz', },
     clean               => { FILES => 'Net-ACMEClient-*' },
 );
